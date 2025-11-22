@@ -121,8 +121,8 @@
                 </div>
             </div>
 
-            <!-- Settings Button -->
-            <button onclick="window.toggleSettings()" class="text-red-900 hover:text-red-200 transition-colors p-2">
+            <!-- Settings Button (Now White) -->
+            <button onclick="window.toggleSettings()" class="text-white hover:text-red-200 transition-colors p-2">
                 <i data-lucide="settings" class="w-6 h-6"></i>
             </button>
         </div>
@@ -177,7 +177,7 @@
                     <div class="h-2 w-8 bg-slate-400 rounded-full mt-3"></div>
                     <div class="h-2 w-8 bg-blue-400 rounded-full mt-3"></div>
                 </div>
-                <div class="text-slate-500 font-bold text-xs tracking-widest">FAUNADEX v2.5</div>
+                <div class="text-slate-500 font-bold text-xs tracking-widest">FAUNADEX v2.7</div>
             </div>
         </div>
 
@@ -222,14 +222,14 @@
     <script type="module">
         // --- 1. Imports ---
         import { initializeApp, setLogLevel } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-app.js";
-        import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken, GoogleAuthProvider, signInWithPopup, signOut, updateProfile } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-auth.js";
-        import { getFirestore, collection, addDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-firestore.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken, updateProfile } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-auth.js";
+        import { getFirestore, collection, addDoc, onSnapshot, deleteDoc, doc } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-firestore.js";
 
 
         // --- 2. Config ---
         // Placeholder Firebase configuration (will be overridden by environment variables in Canvas)
         const firebaseConfig = {
-            apiKey: "AIzaSyDTA2k1HG4DNvCPzl-V4e3OYAEnMMNSBGQ",
+            apiKey: "AIzaSyDTA2k1HG4DNvCPzl-V4e3OYAEnMMNSBGV",
             authDomain: "faunadex-54162.firebaseapp.com",
             projectId: "faunadex-54162",
             storageBucket: "faunadex-54162.firebasestorage.app",
@@ -249,13 +249,15 @@
 
         // --- 4. App Globals and State ---
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-        const GEMINI_API_KEY = "AIzaSyAU0jDwjt2h1HE09Ib7k-JtpjATIL5HL2s"; 
+        // Note: API key is now strictly internal and cannot be edited by the user.
+        const GEMINI_API_KEY = ""; // Rely on the environment to provide the key securely
 
         let currentUser = null;
         let sightings = [];
         let currentAnalysis = null;
-        let userApiKey = localStorage.getItem('faunadex_api_key') || "";
-        let userLocation = localStorage.getItem('faunadex_location') || "Acquiring..."; // Saved location or status
+        let userLocation = localStorage.getItem('faunadex_location') || "Acquiring..."; 
+        let userNickname = localStorage.getItem('faunadex_nickname') || 'Explorer';
+
 
         // --- Elements ---
         const contentArea = document.getElementById('contentArea');
@@ -292,49 +294,22 @@
                         },
                         (error) => {
                             userLocation = "Geo-Location Disabled/Denied";
+                            localStorage.setItem('faunadex_location', userLocation);
                             resolve();
                         },
                         { timeout: 5000 }
                     );
                 } else {
                     userLocation = "Geolocation Not Supported";
+                    localStorage.setItem('faunadex_location', userLocation);
                     resolve();
                 }
             });
         };
 
-        // --- Auth Functions ---
+        // --- Setup Functions ---
 
-        window.signInWithGoogle = async () => {
-            try {
-                const provider = new GoogleAuthProvider();
-                // Use a redirect for mobile-friendliness if in a standalone environment, 
-                // but popup is safer in an iframe.
-                await signInWithPopup(auth, provider); 
-                // onAuthStateChanged will handle hiding the setup screen
-                window.showMessage("Signed in successfully with Google!");
-            } catch (error) {
-                console.error("Google Sign-In failed:", error);
-                if (error.code !== 'auth/popup-closed-by-user') {
-                    window.showMessage("Google Sign-In Failed: " + error.message);
-                }
-            }
-        }
-
-        window.signOutUser = async () => {
-            try {
-                await signOut(auth);
-                window.showMessage("Signed out. Switched to anonymous mode.");
-                window.toggleSettings(); // Close settings after sign out
-                // onAuthStateChanged will trigger renderSetupScreen
-            } catch (error) {
-                console.error("Sign out failed:", error);
-                window.showMessage("Sign Out Failed: " + error.message);
-            }
-        }
-        
-        // This function acts as the "FaunaDex Registration" completion step
-        window.completeSetup = async (isGuest = false) => {
+        window.completeSetup = async () => {
             const nicknameInput = document.getElementById('nicknameInput');
             const nickname = nicknameInput ? nicknameInput.value.trim() : 'Explorer';
 
@@ -348,85 +323,86 @@
                 return;
             }
 
-            // 1. Update Profile (If a permanent user, this sets their official display name)
-            if (!currentUser.isAnonymous) {
-                try {
-                    await updateProfile(currentUser, { displayName: nickname });
-                    currentUser = auth.currentUser; // Get updated user object
-                    window.showMessage(`Welcome, ${nickname}! Your registration is complete.`);
-                } catch(e) {
-                    console.error("Failed to update profile:", e);
-                    window.showMessage("Failed to save nickname.");
-                }
-            } 
+            // 1. Update Profile & State
+            try {
+                await updateProfile(currentUser, { displayName: nickname });
+                currentUser = auth.currentUser;
+                userNickname = nickname; // Update state
+                window.showMessage(`Welcome, ${nickname}! Registration complete.`);
+            } catch(e) {
+                console.error("Failed to update profile:", e);
+                window.showMessage("Failed to save nickname.");
+            }
             
-            // 2. Save Nickname/Location to Local Storage (Used for all users, including guests)
+            // 2. Save Nickname/Location to Local Storage 
             localStorage.setItem('faunadex_nickname', nickname);
             localStorage.setItem('faunadex_location', userLocation);
 
             // 3. Hide setup screen and proceed to main app
             if (setupOverlay) setupOverlay.classList.add('hidden');
-            renderList();
+            subscribeToData(); // Start data sync after setup
         }
 
-        // --- Initial Setup Screen Rendering ---
         async function renderSetupScreen() {
             if (!setupOverlay) return;
             
-            // Re-acquire location status
             await getGeolocation(); 
             
-            const savedNickname = localStorage.getItem('faunadex_nickname') || '';
+            const savedNickname = localStorage.getItem('faunadex_nickname') || currentUser?.displayName || '';
             
             setupOverlay.classList.remove('hidden');
             setupOverlay.classList.add('flex');
             
             const userIsAnonymous = currentUser ? currentUser.isAnonymous : true;
-            const titleText = userIsAnonymous ? "WELCOME EXPLORER" : `Welcome Back, ${currentUser.displayName || savedNickname || 'Explorer'}`;
+            let authStatusText = '';
+            if (!currentUser) {
+                 authStatusText = 'CONNECTING...';
+            } else if (userIsAnonymous) {
+                 authStatusText = 'GUEST MODE (Temporary Data)';
+            } else {
+                 authStatusText = 'PERSISTENT ACCOUNT (Data Saved)';
+            }
 
             setupOverlay.innerHTML = `
                 <div class="w-full p-4 bg-slate-800 rounded-lg shadow-xl border border-slate-700 space-y-4">
-                    <h2 class="text-3xl font-bold text-emerald-400 mb-4">${titleText}</h2>
+                    <h2 class="text-3xl font-bold text-emerald-400 mb-4">FAUNADEX REGISTRATION</h2>
                     
                     <div class="space-y-2">
-                        <label for="nicknameInput" class="text-slate-400 text-sm block">Your Explorer Nickname:</label>
+                        <label for="nicknameInput" class="text-slate-400 text-sm block">Explorer Nickname:</label>
                         <input type="text" id="nicknameInput" value="${savedNickname}" placeholder="Enter a name..." class="w-full bg-slate-900 text-white px-3 py-2 rounded-lg border border-slate-700 focus:border-emerald-500 outline-none">
                     </div>
 
                     <div class="space-y-2">
-                        <label class="text-slate-400 text-sm block">Current Scanning Location:</label>
-                        <div class="w-full bg-slate-900 text-yellow-400 px-3 py-2 rounded-lg border border-slate-700 text-sm font-mono flex items-center gap-2">
-                            <i data-lucide="map-pin" class="w-4 h-4"></i>
-                            <span id="currentLocationText">${userLocation}</span>
+                        <label class="text-slate-400 text-sm block">Authentication Status:</label>
+                        <div class="w-full bg-slate-900 text-yellow-400 px-3 py-2 rounded-lg border border-slate-700 text-sm font-mono flex items-center justify-between gap-2">
+                            <span>${authStatusText}</span>
+                            <i data-lucide="${userIsAnonymous ? 'user-x' : 'user-check'}" class="w-4 h-4 text-emerald-400"></i>
                         </div>
-                        <p class="text-xs text-slate-500 italic">*This location is automatically tagged to your scans.</p>
                     </div>
 
-                    ${userIsAnonymous ? `
-                        <p class="text-xs text-red-400 font-bold mt-4">WARNING: You are in Guest Mode. Data is temporary and may be lost.</p>
-                        <button onclick="window.signInWithGoogle()" class="w-full bg-blue-600 hover:bg-blue-500 text-white py-3 rounded-lg font-bold text-lg flex items-center justify-center gap-2 shadow-md">
-                            <i data-lucide="log-in" class="w-6 h-6"></i> SIGN IN WITH GOOGLE (Save Data)
-                        </button>
-                        <button onclick="window.completeSetup(true)" class="w-full bg-slate-700 hover:bg-slate-600 text-white py-2 rounded-lg font-bold">
-                            CONTINUE AS GUEST
-                        </button>
-                    ` : `
-                        <button onclick="window.completeSetup(false)" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white py-3 rounded-lg font-bold text-lg shadow-md">
-                            START SCANNING
-                        </button>
-                    `}
+                    <div class="space-y-2">
+                        <label class="text-slate-400 text-sm block">Current Scanning Location:</label>
+                        <div class="w-full bg-slate-900 text-white px-3 py-2 rounded-lg border border-slate-700 text-sm font-mono flex items-center gap-2">
+                            <i data-lucide="map-pin" class="w-4 h-4 text-red-400"></i>
+                            <span id="currentLocationText">${userLocation}</span>
+                        </div>
+                    </div>
+
+                    <p class="text-xs text-slate-500 italic pt-2">*Your nickname and location will be tagged to all scans.</p>
+
+                    <button onclick="window.completeSetup()" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white py-3 rounded-lg font-bold text-lg shadow-md">
+                        START FAUNADEX
+                    </button>
                 </div>
             `;
-            // Initialize lucide icons for the new content
-            lucide.createIcons(); 
+            lucide.createIcons();
         }
 
-        // --- Settings Management ---
+        // --- Settings Management (API Key removed) ---
         function renderSettings() {
-            const currentApiKey = localStorage.getItem('faunadex_api_key') || "";
-            const userIsAnonymous = currentUser ? currentUser.isAnonymous : true;
-            const nickname = localStorage.getItem('faunadex_nickname') || currentUser.displayName || 'Guest';
+            const nickname = localStorage.getItem('faunadex_nickname') || currentUser?.displayName || 'Guest';
             const fullUserId = currentUser ? currentUser.uid : 'N/A';
+            const userIsAnonymous = currentUser ? currentUser.isAnonymous : true;
             
             if (!settingsOverlay) return;
 
@@ -447,24 +423,10 @@
                         <span class="block text-slate-500">STATUS: ${userIsAnonymous ? 'Temporary Guest' : 'Persistent Account'}</span>
                     </div>
 
-                    ${userIsAnonymous ? `
-                        <button onclick="window.signInWithGoogle()" class="w-full bg-blue-600 hover:bg-blue-500 text-white py-2 rounded font-bold text-sm flex items-center justify-center gap-2">
-                            <i data-lucide="log-in" class="w-4 h-4"></i> SIGN IN WITH GOOGLE
-                        </button>
-                    ` : `
-                        <button onclick="window.signOutUser()" class="w-full bg-red-600 hover:bg-red-500 text-white py-2 rounded font-bold text-sm flex items-center justify-center gap-2">
-                            <i data-lucide="log-out" class="w-4 h-4"></i> SIGN OUT (${currentUser.displayName || 'User'})
-                        </button>
-                    `}
-
                     <div class="pt-4 border-t border-slate-700">
-                        <label class="block text-slate-500 text-xs font-bold uppercase mb-1">Gemini API Key (Override)</label>
-                        <input type="password" id="apiKeyInput" placeholder="Paste key here..." class="w-full bg-slate-800 border border-slate-600 text-white px-3 py-2 rounded font-mono text-sm focus:border-emerald-500 outline-none" value="${currentApiKey}">
+                        <span class="block text-slate-500 text-xs font-bold uppercase mb-1">API Status</span>
+                        <span class="text-sm text-emerald-400 font-mono">Internal Key is Active.</span>
                     </div>
-
-                    <button onclick="window.saveApiKey()" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white py-2 rounded font-bold text-sm">
-                        SAVE CONFIGURATION
-                    </button>
                 </div>
             `;
             lucide.createIcons();
@@ -474,7 +436,7 @@
             if (!settingsOverlay) return;
 
             if (settingsOverlay.classList.contains('hidden')) {
-                renderSettings(); // Render content before showing
+                renderSettings(); 
                 settingsOverlay.classList.remove('hidden');
                 settingsOverlay.classList.add('flex');
             } else {
@@ -483,21 +445,7 @@
             }
         }
         
-        window.saveApiKey = () => {
-            const apiKeyInputEl = document.getElementById('apiKeyInput');
-            const key = apiKeyInputEl ? apiKeyInputEl.value.trim() : '';
-            
-            if (key) {
-                localStorage.setItem('faunadex_api_key', key);
-                userApiKey = key;
-                window.showMessage("System Config Updated");
-            } else {
-                localStorage.removeItem('faunadex_api_key');
-                userApiKey = "";
-                window.showMessage("Restored Default Key");
-            }
-            window.toggleSettings(); 
-        }
+        // window.saveApiKey removed as requested.
 
         // --- Auth & Init ---
         const initAuth = async () => {
@@ -507,17 +455,14 @@
 
             if (token) {
                 try {
-                    console.log("Attempting sign in with custom platform token...");
                     if (authStatus) authStatus.innerText = "Authenticating with platform token...";
                     await signInWithCustomToken(auth, token);
                     return; 
                 } catch (error) {
-                    console.warn(`Custom token failed (Code: ${error.code}). Falling back to anonymous sign in...`);
-                    console.error("Token error details:", error);
+                    console.warn(`Custom token failed. Falling back to anonymous sign in...`);
                 }
             }
 
-            // Fallback: Sign in Anonymously
             try {
                 if (authStatus) authStatus.innerText = "Connecting to anonymous network...";
                 await signInAnonymously(auth);
@@ -541,56 +486,40 @@
         onAuthStateChanged(auth, (user) => {
             currentUser = user;
             
-            // Handle success
             if (user) {
-                console.log("Auth success. User ID:", user.uid, "Anonymous:", user.isAnonymous);
-                
-                // 1. Hide the initial auth overlay
                 if (authStatus) authStatus.innerText = "SYSTEM ONLINE. READY.";
                 setTimeout(() => {
                     if (authOverlay) authOverlay.classList.add('hidden');
                 }, 500);
-                
-                // 2. Determine if setup/registration is needed
+
                 const isSetupComplete = !!localStorage.getItem('faunadex_nickname');
                 
-                if (user.isAnonymous && !isSetupComplete) {
-                    // Force setup for anonymous user if they haven't set a nickname yet
-                    renderSetupScreen();
-                } else if (!user.isAnonymous && !user.displayName) {
-                    // Force setup for new Google user if they don't have a display name set by the app
+                if (!isSetupComplete) {
                     renderSetupScreen();
                 } else {
-                    // All good, hide setup and show main app
+                    userNickname = localStorage.getItem('faunadex_nickname');
                     if (setupOverlay) setupOverlay.classList.add('hidden');
-                    // 3. Start listening to data and render main list
                     subscribeToData();
                 }
                 
-                // Update settings view if open
                 if (!settingsOverlay.classList.contains('hidden')) {
                     renderSettings();
                 }
 
             } else {
-                // User signed out, or failed to sign in. 
                 currentUser = null;
-                // Re-trigger setup screen when signed out
                 if (setupOverlay) setupOverlay.classList.remove('hidden');
                 renderSetupScreen(); 
-                console.log("Auth state changed: No user is currently active. Showing setup.");
             }
         });
         
-        // Start Auth *after* setting up the listener
         initAuth();
 
 
         // --- Data Sync ---
         function subscribeToData() {
             if (!currentUser) {
-                console.log("Not subscribing to data: User is null.");
-                renderList(); // Render empty list for signed-out state
+                renderList(); 
                 return;
             }
             try {
@@ -599,7 +528,14 @@
 
                 onSnapshot(q, (snapshot) => {
                     sightings = snapshot.docs.map(d => ({id: d.id, ...d.data()}));
-                    sightings.sort((a, b) => b.timestamp - a.timestamp);
+                    // IMPORTANT: Filter out any duplicates based on scientificName before saving/rendering
+                    const uniqueSightings = sightings.filter((s, index, self) =>
+                        index === self.findIndex((t) => (
+                            t.scientificName === s.scientificName
+                        ))
+                    );
+
+                    sightings = uniqueSightings.sort((a, b) => b.timestamp - a.timestamp);
                     renderList();
                 }, (error) => {
                     console.error("Firestore snapshot error:", error);
@@ -610,26 +546,52 @@
             }
         }
 
+        // --- Removal Functionality ---
+        window.removeSighting = async (id, name) => {
+            if (!currentUser) {
+                window.showMessage("Authentication required to delete records.");
+                return;
+            }
+
+            if (!confirm(`Are you sure you want to remove ${name} from your FaunaDex?`)) {
+                return;
+            }
+
+            try {
+                const userPath = `artifacts/${appId}/users/${currentUser.uid}/sightings`;
+                const docRef = doc(db, userPath, id);
+                await deleteDoc(docRef);
+                currentAnalysis = null;
+                window.showMessage(`${name} removed successfully.`);
+                renderList();
+            } catch (e) {
+                console.error("Error deleting document:", e);
+                window.showMessage("Failed to remove animal from Dex.");
+            }
+        };
+
         // --- Rendering ---
         function renderList() {
-            if (currentAnalysis) return; // Don't override if looking at analysis
+            if (currentAnalysis) return; 
             if (!contentArea) return;
 
-            const nickname = localStorage.getItem('faunadex_nickname') || 'Explorer';
+            const isGuest = currentUser ? currentUser.isAnonymous : true;
+            const uniqueAnimalCount = sightings.length;
 
-            if (sightings.length === 0) {
+            if (uniqueAnimalCount === 0) {
                 contentArea.innerHTML = `
                     <div class="h-full flex flex-col items-center justify-center text-slate-500 opacity-60">
                         <i data-lucide="aperture" class="w-16 h-16 mb-4"></i>
-                        <p class="text-center font-bold">GREETINGS, ${nickname.toUpperCase()}</p>
-                        ${currentUser && currentUser.isAnonymous ? `<p class="text-xs text-center mt-2 text-yellow-500">Note: Your Guest data is temporary.</p>` : ''}
+                        <p class="text-center font-bold">GREETINGS, ${userNickname.toUpperCase()}</p>
+                        ${isGuest ? `<p class="text-xs text-center mt-2 text-yellow-500">Note: Your Guest data is temporary.</p>` : ''}
                         <p class="text-xs text-center mt-2">SCAN A SPECIMEN TO BEGIN</p>
                     </div>
                 `;
             } else {
                 contentArea.innerHTML = `
-                    <div class="p-2 text-slate-400 text-xs mb-3 border-b border-slate-800">
-                        ${nickname}'s SIGHTINGS (${sightings.length})
+                    <div class="flex justify-between items-center p-2 text-slate-400 text-xs mb-3 border-b border-slate-800">
+                        <span>${userNickname}'s SIGHTINGS</span>
+                        <span class="font-bold text-emerald-400">${uniqueAnimalCount} UNIQUE ANIMALS</span>
                     </div>
                     <div class="grid grid-cols-1 gap-3">
                         ${sightings.map(s => `
@@ -662,7 +624,7 @@
         };
 
         function renderDetail(data, isNew = false) {
-            currentAnalysis = isNew ? data : null; // Lock view if new
+            currentAnalysis = isNew ? data : null;
             
             if (!contentArea) return;
 
@@ -674,7 +636,11 @@
                         <button onclick="window.goHome()" class="text-slate-400 hover:text-white flex items-center gap-1 text-xs uppercase font-bold">
                             <i data-lucide="chevron-left" class="w-4 h-4"></i> Back
                         </button>
-                        ${isNew ? '<span class="text-yellow-400 text-xs animate-pulse font-bold">NEW DISCOVERY!</span>' : ''}
+                        ${isNew ? '<span class="text-yellow-400 text-xs animate-pulse font-bold">NEW DISCOVERY!</span>' : `
+                            <button onclick="window.removeSighting('${data.id}', '${data.nickname}')" class="text-red-500 hover:text-red-400 flex items-center gap-1 text-xs uppercase font-bold">
+                                <i data-lucide="trash-2" class="w-4 h-4"></i> Remove
+                            </button>
+                        `}
                     </div>
 
                     <div class="bg-slate-900 border-2 border-slate-700 rounded-lg p-1 mb-3 relative">
@@ -747,6 +713,15 @@
                 nickname: nickInput ? nickInput.value : currentAnalysis.commonName
             };
 
+            // --- DUPLICATE CHECK ---
+            if (sightings.some(s => s.scientificName === finalData.scientificName)) {
+                window.showMessage(`Duplicate detected: ${finalData.scientificName} is already in the Dex.`);
+                currentAnalysis = null;
+                renderList();
+                return;
+            }
+            // --- END DUPLICATE CHECK ---
+
             try {
                 const userPath = `artifacts/${appId}/users/${currentUser.uid}/sightings`;
                 await addDoc(collection(db, userPath), finalData);
@@ -791,26 +766,16 @@
                 return;
             }
 
-            // Check if setup/registration is done before allowing scan
             if (setupOverlay && !setupOverlay.classList.contains('hidden')) {
                  window.showMessage("Please complete the registration screen first.");
                  return;
             }
-
-            const apiKeyToUse = userApiKey || GEMINI_API_KEY;
             
-            if (!apiKeyToUse) {
-                window.toggleSettings();
-                window.showMessage("API Key Missing");
-                return;
-            }
-
             if (scanOverlay) scanOverlay.classList.remove('hidden');
             if (scanOverlay) scanOverlay.classList.add('flex');
             if (scanStatus) scanStatus.innerText = "Compressing Visual Data...";
             
             try {
-                // Use the saved location from state, updated during setup/init
                 const locStr = userLocation.startsWith('Geo') ? userLocation : `(${userLocation})`;
 
                 const base64Full = await compressImage(file);
@@ -818,7 +783,8 @@
 
                 if (scanStatus) scanStatus.innerText = "Identifying Species...";
                 
-                const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKeyToUse}`;
+                // Using the internal, environment-provided API key
+                const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${GEMINI_API_KEY}`;
                 
                 const systemPrompt = `You are FaunaDex, a digital animal scanner. Analyze the image and provide a structured JSON output with the following fields: commonName (species name), scientificName (Latin name), estimatedWeight (e.g., "5 kg"), dangerLevel ("Safe", "Caution", "Danger"), diet ("Carnivore", "Herbivore", "Omnivore"), rarity ("Common", "Uncommon", "Rare", "Legendary"), funFact (a short, interesting, single paragraph about the animal). The language must be professional and concise.`;
                 const userQuery = "Identify the animal in the image and generate the structured analysis.";
@@ -849,7 +815,6 @@
                     }
                 };
 
-                // --- API Call with Backoff ---
                 let response;
                 let result;
                 let attempts = 0;
@@ -867,17 +832,14 @@
 
                         if (response.ok) {
                             result = await response.json();
-                            break; // Success
+                            break; 
                         } else if (response.status === 429) {
-                            // Rate limit or temporary error
                             attempts++;
                             const delay = Math.pow(2, attempts) * 1000;
-                            console.warn(`Rate limit hit, retrying in ${delay / 1000}s...`);
                             if (attempts < maxAttempts) {
                                 await new Promise(res => setTimeout(res, delay));
                             }
                         } else {
-                            // Non-rate limit HTTP error
                             const errorBody = await response.json();
                             throw new Error(`API Error ${response.status}: ${JSON.stringify(errorBody)}`);
                         }
@@ -885,7 +847,6 @@
                         if (attempts === maxAttempts - 1) throw e;
                         attempts++;
                         const delay = Math.pow(2, attempts) * 1000;
-                        console.warn(`Attempt failed, retrying in ${delay / 1000}s...`);
                         await new Promise(res => setTimeout(res, delay));
                     }
                 }
@@ -908,7 +869,6 @@
                 
                 if (scanOverlay) scanOverlay.classList.add('hidden');
                 
-                // Show detail view for the new sighting
                 renderDetail(sighting, true);
 
             } catch (error) {
@@ -918,9 +878,8 @@
             }
         };
 
-        // --- Event Listeners ---
+        // --- Event Listeners (Drag/Drop/File Input) ---
         
-        // Input Button
         if (fileInput) {
             fileInput.addEventListener('change', (e) => {
                 if (e.target.files.length > 0) {
@@ -929,13 +888,11 @@
             });
         }
 
-        // Drag and Drop Logic (Enhanced)
         const preventDefaults = (e) => {
             e.preventDefault();
             e.stopPropagation();
         };
 
-        // Assuming 'dexScreen' is a variable referencing the screen element, which is the parent of contentArea, setupOverlay, etc.
         const dexScreen = document.querySelector('.dex-screen');
         if (dexScreen) {
             ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
@@ -964,10 +921,6 @@
                 }
             }, false);
         }
-
-        // --- Initial Call ---
-        // Auth is started via initAuth at the end of the script, 
-        // and the rendering flow is handled by onAuthStateChanged.
 
     </script>
 </body>
