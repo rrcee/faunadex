@@ -1,0 +1,802 @@
+<!DOCTYPE html>
+<html lang="en">
+
+  <head>
+    <meta charset="UTF-8">
+    <title>Untitled</title>
+    
+
+  </head>
+    
+  <body>
+  <!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FaunaDex - Real World Animal Scanner</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=VT323&display=swap" rel="stylesheet">
+    
+    <style>
+        :root {
+            --dex-red: #dc2626;
+            --dex-dark-red: #991b1b;
+            --screen-bg: #1e293b;
+        }
+
+        body {
+            background-color: #1a1a1a;
+            font-family: 'Share Tech Mono', monospace;
+            overflow-x: hidden;
+        }
+
+        /* Pokedex Casing Styles */
+        .dex-shell {
+            box-shadow: 
+                inset 4px 4px 10px rgba(255,255,255,0.3),
+                inset -4px -4px 10px rgba(0,0,0,0.5),
+                10px 10px 20px rgba(0,0,0,0.5);
+        }
+
+        .dex-screen-container {
+            background-color: #e2e8f0;
+            border-radius: 1rem 1rem 1rem 3rem;
+            box-shadow: inset 2px 2px 5px rgba(0,0,0,0.3);
+        }
+
+        .dex-screen {
+            background: #0f172a;
+            background-image: 
+                linear-gradient(rgba(14, 165, 233, 0.03) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(14, 165, 233, 0.03) 1px, transparent 1px);
+            background-size: 20px 20px;
+            box-shadow: inset 0 0 20px rgba(0,0,0,0.8);
+        }
+
+        /* Blue Sensor Animation */
+        .sensor-glow {
+            background: radial-gradient(circle at 30% 30%, #60a5fa, #2563eb);
+            box-shadow: 0 0 15px #3b82f6;
+            animation: pulse-blue 3s infinite;
+        }
+        @keyframes pulse-blue {
+            0%, 100% { box-shadow: 0 0 10px #3b82f6; }
+            50% { box-shadow: 0 0 25px #60a5fa; }
+        }
+
+        /* LED Animations */
+        .led-red { animation: blink 1s infinite alternate; }
+        .led-yellow { animation: blink 1.5s infinite alternate; }
+        .led-green { animation: blink 2s infinite alternate; }
+        
+        @keyframes blink {
+            0% { opacity: 0.4; }
+            100% { opacity: 1; box-shadow: 0 0 8px currentColor; }
+        }
+
+        /* Scanning Effect */
+        .scanner-line {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 4px;
+            background: #10b981;
+            box-shadow: 0 0 10px #10b981;
+            animation: scan 2s linear infinite;
+            z-index: 20;
+        }
+        @keyframes scan {
+            0% { top: 0%; opacity: 0; }
+            10% { opacity: 1; }
+            90% { opacity: 1; }
+            100% { top: 100%; opacity: 0; }
+        }
+
+        /* Drag Overlay */
+        .drag-overlay {
+            background: rgba(16, 185, 129, 0.1);
+            border: 2px dashed #10b981;
+        }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #0f172a; }
+        ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+
+        #authOverlay {
+            backdrop-filter: blur(4px);
+        }
+    </style>
+</head>
+<body class="min-h-screen flex items-center justify-center p-4 sm:p-8">
+
+    <!-- Pokedex Body -->
+    <div class="dex-shell relative w-full max-w-md bg-red-600 rounded-[2.5rem] p-6 pb-10 flex flex-col gap-6 border-4 border-red-800">
+        
+        <!-- Top Decor (Sensor & LEDs) -->
+        <div class="flex items-start justify-between pb-2 border-b-4 border-red-800/30">
+            <div class="flex items-start gap-4">
+                <!-- Main Blue Sensor -->
+                <div class="w-16 h-16 rounded-full border-4 border-white/20 sensor-glow relative overflow-hidden">
+                    <div class="absolute top-2 left-2 w-4 h-4 bg-white/60 rounded-full blur-[1px]"></div>
+                </div>
+                
+                <!-- Small LEDs -->
+                <div class="flex gap-2 pt-1">
+                    <div class="w-3 h-3 rounded-full bg-red-500 border border-red-700 led-red"></div>
+                    <div class="w-3 h-3 rounded-full bg-yellow-400 border border-yellow-600 led-yellow"></div>
+                    <div class="w-3 h-3 rounded-full bg-green-500 border border-green-700 led-green"></div>
+                </div>
+            </div>
+
+            <!-- Settings Button -->
+            <button onclick="window.toggleSettings()" class="text-red-900 hover:text-red-200 transition-colors p-2">
+                <i data-lucide="settings" class="w-6 h-6"></i>
+            </button>
+        </div>
+
+        <!-- Screen Area -->
+        <div class="dex-screen-container p-6 sm:p-8 bg-stone-200">
+            <div class="dex-screen relative h-[500px] rounded-lg border-4 border-slate-700 overflow-hidden flex flex-col">
+                
+                <!-- Drag Drop Overlay -->
+                <div id="dragOverlay" class="absolute inset-0 z-40 hidden flex-col items-center justify-center drag-overlay backdrop-blur-sm transition-all">
+                    <i data-lucide="upload-cloud" class="w-16 h-16 text-emerald-400 mb-2"></i>
+                    <p class="text-emerald-400 font-bold text-lg animate-pulse">DROP SPECIMEN IMAGE</p>
+                </div>
+
+                <!-- Settings Overlay (Dynamic Content) -->
+                <div id="settingsOverlay" class="absolute inset-0 z-50 hidden bg-slate-900 p-6 flex-col animate-in fade-in">
+                    <!-- Content populated by renderSettings() in JS -->
+                </div>
+
+                <!-- Main Content State -->
+                <div id="contentArea" class="flex-1 overflow-y-auto p-4 relative z-10">
+                    <!-- Content injected via JS -->
+                </div>
+
+                <!-- Message/Alert Overlay -->
+                <div id="messageOverlay" class="absolute top-4 left-4 right-4 z-50 hidden animate-in slide-in-from-top-5">
+                    <div class="bg-red-500 text-white px-4 py-3 rounded shadow-lg text-xs font-bold border border-red-400 flex justify-between items-center">
+                        <span id="messageText">System Error</span>
+                        <button onclick="document.getElementById('messageOverlay').classList.add('hidden')"><i data-lucide="x" class="w-4 h-4"></i></button>
+                    </div>
+                </div>
+
+                <!-- Scanning Overlay (Hidden by default) -->
+                <div id="scanOverlay" class="absolute inset-0 bg-emerald-900/80 z-30 hidden flex-col items-center justify-center text-center p-6">
+                    <div class="scanner-line"></div>
+                    <i data-lucide="scan" class="w-16 h-16 text-emerald-400 animate-pulse mb-4"></i>
+                    <h2 class="text-2xl text-emerald-400 font-bold mb-2">ANALYZING...</h2>
+                    <p id="scanStatus" class="text-emerald-200 text-xs font-mono">Querying Genetic Database...</p>
+                </div>
+
+            </div>
+            
+            <!-- Screen Controls -->
+            <div class="flex justify-between items-center mt-4 px-2">
+                <div class="flex gap-2">
+                    <div class="w-8 h-8 bg-red-500 rounded-full border-2 border-red-700 shadow-md"></div>
+                    <div class="h-2 w-8 bg-slate-400 rounded-full mt-3"></div>
+                    <div class="h-2 w-8 bg-blue-400 rounded-full mt-3"></div>
+                </div>
+                <div class="text-slate-500 font-bold text-xs tracking-widest">FAUNADEX v2.2</div>
+            </div>
+        </div>
+
+        <!-- Bottom Inputs -->
+        <div class="relative z-20">
+            <!-- 
+            Auth Loading Overlay: Covers the buttons below until auth is ready.
+            -->
+            <div id="authOverlay" class="absolute inset-0 bg-slate-900/50 flex flex-col items-center justify-center z-50 rounded-lg p-4 text-center">
+                <i data-lucide="loader-2" class="w-10 h-10 text-emerald-400 animate-spin"></i>
+                <p id="authStatus" class="text-emerald-300 font-mono mt-3 text-sm">BOOTING SYSTEM... (Connecting...)</p>
+            </div>
+
+            <div class="grid grid-cols-3 gap-4">
+                <!-- D-Pad Visual -->
+                <div class="w-24 h-24 relative">
+                    <div class="absolute top-0 left-1/3 w-1/3 h-full bg-slate-800 rounded-sm shadow-md"></div>
+                    <div class="absolute top-1/3 left-0 w-full h-1/3 bg-slate-800 rounded-sm shadow-md"></div>
+                    <div class="absolute top-1/3 left-1/3 w-1/3 h-1/3 bg-slate-700 rounded-full inset-shadow"></div>
+                </div>
+
+                <!-- Main Action Button -->
+                <div class="col-span-2 flex flex-col gap-2 justify-center">
+                    <label class="group cursor-pointer relative">
+                        <input type="file" id="fileInput" accept="image/*" class="hidden" capture="environment">
+                        <div class="bg-sky-500 hover:bg-sky-400 border-b-8 border-sky-700 active:border-b-0 active:translate-y-2 transition-all rounded-xl p-4 flex items-center justify-center gap-3 shadow-lg">
+                            <i data-lucide="camera" class="w-8 h-8 text-white"></i>
+                            <span class="text-white font-bold text-xl tracking-wider">SCAN ANIMAL</span>
+                        </div>
+                    </label>
+                    <p class="text-center text-red-200 text-xs opacity-70">or drag & drop image on screen</p>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- MERGED AND FIXED SCRIPT BLOCK -->
+    <script type="module">
+        // --- 1. Imports ---
+        import { initializeApp, setLogLevel } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-app.js";
+        // NOTE: Added GoogleAuthProvider, signInWithPopup, and signOut
+        import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken, GoogleAuthProvider, signInWithPopup, signOut } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-auth.js";
+        import { getFirestore, collection, addDoc, onSnapshot, deleteDoc, doc } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-firestore.js";
+
+
+        // --- 2. Config ---
+        // NOTE: These placeholder values are for demonstration/sandbox purposes.
+        const firebaseConfig = {
+            apiKey: "AIzaSyDTA2k1HG4DNvCPzl-V4e3OYAEnMMNSBGQ",
+            authDomain: "faunadex-54162.firebaseapp.com",
+            projectId: "faunadex-54162",
+            storageBucket: "faunadex-54162.firebasestorage.app",
+            messagingSenderId: "549732913816",
+            appId: "1:549732913816:web:2683af5eb3631fc589f6ed",
+            measurementId: "G-ZVFL1D3HR7"
+        };
+
+        // --- 3. Firebase Initialization ---
+        // We use global variables (__firebase_config, __app_id, __initial_auth_token) provided by the environment.
+        const effectiveFirebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : firebaseConfig;
+        
+        const app = initializeApp(effectiveFirebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+        
+        setLogLevel('debug'); // Enable debug logging for Firebase
+
+        // --- 4. All Original App Logic ---
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const GEMINI_API_KEY = "AIzaSyAU0jDwjt2h1HE09Ib7k-JtpjATIL5HL2s"; // Default API key
+
+        // --- State ---
+        let currentUser = null;
+        let sightings = [];
+        let currentAnalysis = null;
+        let userApiKey = localStorage.getItem('faunadex_api_key') || "";
+
+        // --- Elements ---
+        const contentArea = document.getElementById('contentArea');
+        const scanOverlay = document.getElementById('scanOverlay');
+        const scanStatus = document.getElementById('scanStatus');
+        const dragOverlay = document.getElementById('dragOverlay');
+        const fileInput = document.getElementById('fileInput');
+        const dexScreen = document.querySelector('.dex-screen');
+        const settingsOverlay = document.getElementById('settingsOverlay');
+        const messageOverlay = document.getElementById('messageOverlay');
+        const messageText = document.getElementById('messageText');
+        const authOverlay = document.getElementById('authOverlay');
+        const authStatus = document.getElementById('authStatus');
+
+        // --- UI Helpers ---
+        window.showMessage = (msg) => {
+            if (!messageOverlay || !messageText) return;
+            messageText.innerText = msg;
+            messageOverlay.classList.remove('hidden');
+            setTimeout(() => messageOverlay.classList.add('hidden'), 4000);
+        }
+
+        // --- NEW: Auth Functions ---
+
+        window.signInWithGoogle = async () => {
+            try {
+                const provider = new GoogleAuthProvider();
+                await signInWithPopup(auth, provider);
+                window.showMessage("Signed in successfully with Google!");
+                window.toggleSettings(); // Close settings after successful sign-in
+            } catch (error) {
+                console.error("Google Sign-In failed:", error);
+                // Handle specific errors like 'auth/popup-closed-by-user'
+                if (error.code !== 'auth/popup-closed-by-user') {
+                    window.showMessage("Google Sign-In Failed: " + error.message);
+                }
+            }
+        }
+
+        window.signOutUser = async () => {
+            try {
+                await signOut(auth);
+                // Auth listener will catch this and re-run initAuth (which will fall back to anonymous)
+                window.showMessage("Signed out. Switched to anonymous mode.");
+                window.toggleSettings();
+            } catch (error) {
+                console.error("Sign out failed:", error);
+                window.showMessage("Sign Out Failed: " + error.message);
+            }
+        }
+        
+        // --- Settings Management ---
+        function renderSettings() {
+            // Re-read local storage key for fresh value
+            const currentApiKey = localStorage.getItem('faunadex_api_key') || "";
+            const userIsAnonymous = currentUser ? currentUser.isAnonymous : true;
+            const userDisplayName = currentUser ? (currentUser.displayName || `User ID: ${currentUser.uid.substring(0, 8)}...`) : 'Guest';
+            const fullUserId = currentUser ? currentUser.uid : 'N/A';
+            
+            if (!settingsOverlay) return;
+
+            settingsOverlay.innerHTML = `
+                <div class="flex justify-between items-center mb-6 border-b border-slate-700 pb-2">
+                    <h2 class="text-white font-bold text-xl">SYSTEM CONFIG</h2>
+                    <button onclick="window.toggleSettings()" class="text-slate-400 hover:text-white"><i data-lucide="x"></i></button>
+                </div>
+                
+                <div class="space-y-4 overflow-y-auto pb-4">
+                    <div class="text-emerald-400 text-xs break-all">
+                        <span class="block text-slate-500 mb-1">USER ID (For public data sync)</span>
+                        <span class="font-bold text-white">${fullUserId}</span>
+                    </div>
+
+                    <div class="text-emerald-400 text-xs">
+                        USER STATUS: <span class="font-bold text-white">${userDisplayName}</span>
+                        ${userIsAnonymous ? '<span class="text-yellow-400">(Temporary)</span>' : '<span class="text-blue-400">(Persistent)</span>'}
+                    </div>
+                    
+                    ${userIsAnonymous ? `
+                        <button onclick="window.signInWithGoogle()" class="w-full bg-blue-600 hover:bg-blue-500 text-white py-2 rounded font-bold text-sm flex items-center justify-center gap-2">
+                            <i data-lucide="log-in" class="w-4 h-4"></i> SIGN IN WITH GOOGLE
+                        </button>
+                    ` : `
+                        <button onclick="window.signOutUser()" class="w-full bg-red-600 hover:bg-red-500 text-white py-2 rounded font-bold text-sm flex items-center justify-center gap-2">
+                            <i data-lucide="log-out" class="w-4 h-4"></i> SIGN OUT (${currentUser.displayName || 'User'})
+                        </button>
+                    `}
+
+                    <div class="pt-4 border-t border-slate-700">
+                        <label class="block text-slate-500 text-xs font-bold uppercase mb-1">Gemini API Key (Override)</label>
+                        <input type="password" id="apiKeyInput" placeholder="Paste key here..." class="w-full bg-slate-800 border border-slate-600 text-white px-3 py-2 rounded font-mono text-sm focus:border-emerald-500 outline-none" value="${currentApiKey}">
+                    </div>
+
+                    <button onclick="window.saveApiKey()" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white py-2 rounded font-bold text-sm">
+                        SAVE CONFIGURATION
+                    </button>
+                </div>
+            `;
+            lucide.createIcons();
+        }
+
+        window.toggleSettings = () => {
+            if (!settingsOverlay) return;
+
+            if (settingsOverlay.classList.contains('hidden')) {
+                renderSettings(); // Render content before showing
+                settingsOverlay.classList.remove('hidden');
+                settingsOverlay.classList.add('flex');
+            } else {
+                settingsOverlay.classList.add('hidden');
+                settingsOverlay.classList.remove('flex');
+            }
+        }
+        
+        window.saveApiKey = () => {
+            const apiKeyInputEl = document.getElementById('apiKeyInput');
+            const key = apiKeyInputEl ? apiKeyInputEl.value.trim() : '';
+            
+            if (key) {
+                localStorage.setItem('faunadex_api_key', key);
+                userApiKey = key;
+                window.showMessage("System Config Updated");
+            } else {
+                localStorage.removeItem('faunadex_api_key');
+                userApiKey = "";
+                window.showMessage("Restored Default Key");
+            }
+            window.toggleSettings(); // Re-render/close settings
+        }
+
+        // --- Auth & Init (FIXED) ---
+        const initAuth = async () => {
+            let attemptCustomToken = false;
+            try {
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    attemptCustomToken = true;
+                    console.log("Attempting sign in with custom token...");
+                    if (authStatus) authStatus.innerText = "Authenticating with platform token...";
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                    return; // Success
+                } else {
+                    console.log("Attempting anonymous sign in (No custom token provided)...");
+                    if (authStatus) authStatus.innerText = "Connecting to anonymous network...";
+                    await signInAnonymously(auth);
+                    return; // Success
+                }
+            } catch (error) {
+                console.error("Authentication failed:", error);
+                
+                // FIX: If custom token failed (auth/custom-token-mismatch), try anonymous sign in as a fallback
+                if (attemptCustomToken && error.code === 'auth/custom-token-mismatch') {
+                    console.warn("Custom token failed. Falling back to anonymous sign in...");
+                    if (authStatus) authStatus.innerText = "Custom token mismatch. Attempting anonymous fallback...";
+                    try {
+                        await signInAnonymously(auth);
+                        return; // Anonymous sign in successful
+                    } catch (anonError) {
+                        console.error("Anonymous sign in failed too:", anonError);
+                        error = anonError; // Use the anonymous error for final display
+                    }
+                }
+                
+                // Final error handling and UI update (FIX: Added null checks to prevent TypeError)
+                window.showMessage("Auth Error: " + error.message);
+                
+                if (authStatus) {
+                    authStatus.innerText = `AUTH ERROR: ${error.code}\nCheck console & Firebase settings.`;
+                    authStatus.classList.remove("text-emerald-300");
+                    authStatus.classList.add("text-red-400");
+                }
+                
+                if (authOverlay) {
+                    const loader = authOverlay.querySelector('i');
+                    if (loader) loader.classList.add('hidden');
+                }
+            }
+        };
+        
+        onAuthStateChanged(auth, (user) => {
+            currentUser = user;
+            
+            // Handle success
+            if (user) {
+                console.log("Auth success. User ID:", user.uid, "Anonymous:", user.isAnonymous);
+                
+                // Only hide the overlay if auth was successful (even if it's anonymous)
+                if (authStatus) authStatus.innerText = "SYSTEM ONLINE. READY.";
+                setTimeout(() => {
+                    if (authOverlay) authOverlay.classList.add('hidden');
+                }, 500);
+                
+                // Update UI and start listening to data
+                if (!settingsOverlay.classList.contains('hidden')) {
+                    renderSettings();
+                }
+                subscribeToData();
+            } else {
+                // Handle Sign Out/No User
+                console.log("Auth state changed: No user. Re-initializing...");
+                // The initAuth function will be called on sign out to switch to an anonymous user
+                // If it fails, the previous error handling will run.
+                // We rely on the initial call to initAuth below. When a user signs out (i.e., when signOutUser runs),
+                // onAuthStateChanged fires with user=null, and the sign-in flow should restart immediately.
+                if (currentUser === null) {
+                    initAuth();
+                }
+            }
+        });
+        
+        // Start Auth *after* setting up the listener
+        initAuth();
+
+
+        // --- Data Sync ---
+        function subscribeToData() {
+            if (!currentUser) {
+                console.error("Cannot subscribe to data: User not authenticated.");
+                return;
+            }
+            try {
+                // IMPORTANT: Ensure the security rules in Firestore allow reading data for the current user ID
+                const userPath = `artifacts/${appId}/users/${currentUser.uid}/sightings`;
+                const q = collection(db, userPath);
+
+                onSnapshot(q, (snapshot) => {
+                    sightings = snapshot.docs.map(d => ({id: d.id, ...d.data()}));
+                    sightings.sort((a, b) => b.timestamp - a.timestamp);
+                    renderList();
+                }, (error) => {
+                    console.error("Firestore snapshot error:", error);
+                    window.showMessage("Database connection error. Check Firestore rules.");
+                });
+            } catch (error) {
+                console.error("Error setting up data subscription:", error);
+            }
+        }
+
+        // --- Rendering ---
+        function renderList() {
+            if (currentAnalysis) return; // Don't override if looking at analysis
+            if (!contentArea) return;
+
+            if (sightings.length === 0) {
+                contentArea.innerHTML = `
+                    <div class="h-full flex flex-col items-center justify-center text-slate-500 opacity-60">
+                        <i data-lucide="aperture" class="w-16 h-16 mb-4"></i>
+                        <p class="text-center font-bold">NO DATA FOUND</p>
+                        <p class="text-xs text-center mt-2">SCAN A SPECIMEN TO BEGIN</p>
+                    </div>
+                `;
+            } else {
+                contentArea.innerHTML = `
+                    <div class="grid grid-cols-1 gap-3">
+                        ${sightings.map(s => `
+                            <div onclick="window.viewSighting('${s.id}')" class="bg-slate-800/80 border border-slate-600 rounded p-2 flex gap-3 cursor-pointer hover:bg-slate-700 transition-colors group">
+                                <div class="w-16 h-16 bg-slate-900 rounded border border-slate-700 overflow-hidden shrink-0">
+                                    <img src="${s.imageBase64}" class="w-full h-full object-cover grayscale group-hover:grayscale-0 transition-all">
+                                </div>
+                                <div class="flex-1 min-w-0">
+                                    <div class="flex justify-between items-start">
+                                        <h3 class="text-emerald-400 font-bold truncate">${s.nickname}</h3>
+                                        <span class="text-[10px] text-slate-500 font-mono">${new Date(s.timestamp).toLocaleDateString()}</span>
+                                    </div>
+                                    <p class="text-slate-400 text-xs italic truncate">${s.commonName}</p>
+                                    <div class="mt-1 flex items-center gap-1">
+                                        <span class="px-1.5 py-0.5 bg-slate-700 text-slate-300 text-[10px] rounded font-bold uppercase">${s.rarity}</span>
+                                    </div>
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
+                `;
+            }
+            lucide.createIcons();
+        }
+
+        window.viewSighting = (id) => {
+            const s = sightings.find(item => item.id === id);
+            if(!s) return;
+            renderDetail(s, false);
+        };
+
+        function renderDetail(data, isNew = false) {
+            currentAnalysis = isNew ? data : null; // Lock view if new
+            
+            if (!contentArea) return;
+
+            const dangerColor = data.dangerLevel === 'Safe' ? 'text-emerald-400' : 'text-red-400';
+            
+            contentArea.innerHTML = `
+                <div class="flex flex-col h-full animate-in fade-in duration-300">
+                    <div class="flex items-center justify-between mb-2">
+                        <button onclick="window.goHome()" class="text-slate-400 hover:text-white flex items-center gap-1 text-xs uppercase font-bold">
+                            <i data-lucide="chevron-left" class="w-4 h-4"></i> Back
+                        </button>
+                        ${isNew ? '<span class="text-yellow-400 text-xs animate-pulse font-bold">NEW DISCOVERY!</span>' : ''}
+                    </div>
+
+                    <div class="bg-slate-900 border-2 border-slate-700 rounded-lg p-1 mb-3 relative">
+                        <img src="${data.imageBase64}" class="w-full h-40 object-cover rounded border border-slate-800 block">
+                        <div class="absolute bottom-2 right-2 bg-black/70 px-2 py-1 text-[10px] text-emerald-400 font-mono border border-emerald-900/50 rounded">
+                            TYPE: ${data.diet.toUpperCase()}
+                        </div>
+                    </div>
+
+                    <div class="space-y-3 overflow-y-auto pb-4 pr-1">
+                        <div>
+                            <div class="text-[10px] text-slate-500 uppercase tracking-widest mb-1">Identification</div>
+                            ${isNew ? `
+                                <input id="nicknameInput" type="text" value="${data.commonName}" class="w-full bg-slate-800 border border-slate-600 text-white px-2 py-1 rounded text-lg font-bold focus:border-emerald-500 outline-none" placeholder="Enter Nickname">
+                            ` : `
+                                <h2 class="text-2xl text-white font-bold leading-none">${data.nickname}</h2>
+                            `}
+                            <p class="text-emerald-500 text-sm italic font-mono mt-1">${data.scientificName}</p>
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-2 text-xs font-mono">
+                            <div class="bg-slate-800/50 p-2 rounded border border-slate-700">
+                                <span class="text-slate-500 block text-[9px]">WEIGHT</span>
+                                <span class="text-slate-200">${data.estimatedWeight}</span>
+                            </div>
+                            <div class="bg-slate-800/50 p-2 rounded border border-slate-700">
+                                <span class="text-slate-500 block text-[9px]">THREAT</span>
+                                <span class="${dangerColor} font-bold uppercase">${data.dangerLevel}</span>
+                            </div>
+                        </div>
+
+                        <div class="bg-slate-800/30 p-3 rounded border border-slate-700">
+                            <h4 class="text-xs text-slate-500 uppercase mb-1 flex items-center gap-2">
+                                <i data-lucide="info" class="w-3 h-3"></i> Database Entry
+                            </h4>
+                            <p class="text-sm text-slate-300 leading-relaxed">
+                                ${data.funFact}
+                            </p>
+                        </div>
+                        
+                        <div class="text-[10px] text-slate-600 font-mono pt-2 border-t border-slate-800">
+                            LOC: ${data.location}<br>
+                            TIME: ${new Date(data.timestamp).toLocaleTimeString()}
+                        </div>
+
+                        ${isNew ? `
+                            <button onclick="window.saveCurrent()" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white py-3 rounded font-bold shadow-lg shadow-emerald-900/20 flex items-center justify-center gap-2 mt-2">
+                                <i data-lucide="save" class="w-4 h-4"></i> REGISTER TO DEX
+                            </button>
+                        ` : ''}
+                    </div>
+                </div>
+            `;
+            lucide.createIcons();
+        }
+
+        window.goHome = () => {
+            currentAnalysis = null;
+            renderList();
+        };
+
+        window.saveCurrent = async () => {
+            if (!currentAnalysis || !currentUser) {
+                window.showMessage("Error: No data or user to save.");
+                return;
+            };
+            const nickInput = document.getElementById('nicknameInput');
+            const finalData = {
+                ...currentAnalysis,
+                nickname: nickInput ? nickInput.value : currentAnalysis.commonName
+            };
+
+            try {
+                // Saves data under the current user's UID (Google or Anonymous)
+                const userPath = `artifacts/${appId}/users/${currentUser.uid}/sightings`;
+                await addDoc(collection(db, userPath), finalData);
+                currentAnalysis = null;
+                renderList();
+            } catch (e) {
+                console.error("Error saving to Firestore: ", e);
+                window.showMessage("Error saving: " + e.message);
+            }
+        };
+
+        // --- Image Handling & AI ---
+
+        const compressImage = (file) => {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.readAsDataURL(file);
+                reader.onerror = reject;
+                reader.onload = (event) => {
+                    const img = new Image();
+                    img.src = event.target.result;
+                    img.onerror = reject;
+                    img.onload = () => {
+                        const canvas = document.createElement('canvas');
+                        const MAX_WIDTH = 600;
+                        const scaleSize = MAX_WIDTH / img.width;
+                        canvas.width = MAX_WIDTH;
+                        canvas.height = img.height * scaleSize;
+                        const ctx = canvas.getContext('2d');
+                        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                        resolve(canvas.toDataURL('image/jpeg', 0.7));
+                    };
+                };
+            });
+        };
+
+        const handleFile = async (file) => {
+            if (!file) return;
+            
+            if (!currentUser) {
+                window.showMessage("SYSTEM OFFLINE. Cannot scan.");
+                return;
+            }
+
+            const apiKeyToUse = userApiKey || GEMINI_API_KEY;
+            
+            if (!apiKeyToUse) {
+                window.toggleSettings();
+                window.showMessage("API Key Missing");
+                return;
+            }
+
+            if (scanOverlay) scanOverlay.classList.remove('hidden');
+            if (scanOverlay) scanOverlay.classList.add('flex');
+            if (scanStatus) scanStatus.innerText = "Compressing Visual Data...";
+            
+            try {
+                let locStr = "Unknown Coords";
+                try {
+                    const pos = await new Promise((res, rej) => navigator.geolocation.getCurrentPosition(res, rej, {timeout: 4000}));
+                    locStr = `${pos.coords.latitude.toFixed(4)}, ${pos.coords.longitude.toFixed(4)}`;
+                } catch(e) { console.warn("Loc failed"); }
+
+                const base64Full = await compressImage(file);
+                const base64Raw = base64Full.split(',')[1];
+
+                if (scanStatus) scanStatus.innerText = "Identifying Species...";
+                
+                const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKeyToUse}`;
+
+                const prompt = `
+                    Analyze image. If NOT a real animal (human/drawing/object), return JSON: {"valid": false}.
+                    If YES animal, return JSON:
+                    {
+                        "valid": true,
+                        "commonName": "Short Common Name",
+                        "scientificName": "Scientific Name",
+                        "estimatedWeight": "e.g. 5kg",
+                        "diet": "Herbivore"|"Carnivore"|"Omnivore",
+                        "funFact": "Short sci-fi style field note.",
+                        "rarity": "Common"|"Uncommon"|"Rare"|"Legendary",
+                        "dangerLevel": "Safe"|"Caution"|"Dangerous"
+                    }
+                `;
+
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        contents: [{
+                            parts: [
+                                { text: prompt },
+                                { inlineData: { mimeType: "image/jpeg", data: base64Raw } }
+                            ]
+                        }],
+                        generationConfig: { responseMimeType: "application/json" }
+                    })
+                });
+
+                if (!response.ok) throw new Error("API connection failed. Check Key or CORS.");
+
+                const data = await response.json();
+                const result = JSON.parse(data.candidates?.[0]?.content?.parts?.[0]?.text || "{}");
+
+                if (!result.valid) {
+                    window.showMessage("Error: Visual signature is not an animal.");
+                    if (scanOverlay) scanOverlay.classList.add('hidden');
+                    return;
+                }
+
+                const newEntry = {
+                    ...result,
+                    imageBase64: base64Full,
+                    location: locStr,
+                    timestamp: Date.now()
+                };
+                
+                if (scanOverlay) scanOverlay.classList.add('hidden');
+                renderDetail(newEntry, true);
+
+            } catch (err) {
+                console.error(err);
+                if (scanOverlay) scanOverlay.classList.add('hidden');
+                window.showMessage("System Malfunction: " + err.message);
+            }
+        };
+
+        // --- Listeners ---
+        if (fileInput) fileInput.addEventListener('change', (e) => handleFile(e.target.files[0]));
+
+        if (dexScreen) {
+            dexScreen.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                if (dragOverlay) {
+                    dragOverlay.classList.remove('hidden');
+                    dragOverlay.classList.add('flex');
+                }
+            });
+
+            dexScreen.addEventListener('dragleave', (e) => {
+                e.preventDefault();
+                if (dragOverlay) {
+                    dragOverlay.classList.add('hidden');
+                    dragOverlay.classList.remove('flex');
+                }
+            });
+
+            dexScreen.addEventListener('drop', (e) => {
+                e.preventDefault();
+                if (dragOverlay) {
+                    dragOverlay.classList.add('hidden');
+                    dragOverlay.classList.remove('flex');
+                }
+                
+                if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+                    handleFile(e.dataTransfer.files[0]);
+                }
+            });
+        }
+
+        // Init Icons
+        lucide.createIcons();
+
+    </script>
+</body>
+</html>
+    
+  </body>
+  
+</html>
