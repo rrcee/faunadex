@@ -1,16 +1,5 @@
 <!DOCTYPE html>
 <html lang="en">
-
-  <head>
-    <meta charset="UTF-8">
-    <title>Untitled</title>
-    
-
-  </head>
-    
-  <body>
-  <!DOCTYPE html>
-<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -106,7 +95,7 @@
         ::-webkit-scrollbar-track { background: #0f172a; }
         ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
 
-        #authOverlay {
+        #authOverlay, #setupOverlay {
             backdrop-filter: blur(4px);
         }
     </style>
@@ -153,6 +142,11 @@
                     <!-- Content populated by renderSettings() in JS -->
                 </div>
 
+                <!-- Setup/Welcome Overlay (New, high priority after Auth) -->
+                <div id="setupOverlay" class="absolute inset-0 z-50 hidden bg-slate-900/95 p-6 flex-col items-center justify-center text-center">
+                    <!-- Content populated by renderSetupScreen() in JS -->
+                </div>
+
                 <!-- Main Content State -->
                 <div id="contentArea" class="flex-1 overflow-y-auto p-4 relative z-10">
                     <!-- Content injected via JS -->
@@ -183,7 +177,7 @@
                     <div class="h-2 w-8 bg-slate-400 rounded-full mt-3"></div>
                     <div class="h-2 w-8 bg-blue-400 rounded-full mt-3"></div>
                 </div>
-                <div class="text-slate-500 font-bold text-xs tracking-widest">FAUNADEX v2.2</div>
+                <div class="text-slate-500 font-bold text-xs tracking-widest">FAUNADEX v2.5</div>
             </div>
         </div>
 
@@ -205,8 +199,11 @@
                     <div class="absolute top-1/3 left-1/3 w-1/3 h-1/3 bg-slate-700 rounded-full inset-shadow"></div>
                 </div>
 
-                <!-- Main Action Button -->
+                <!-- Main Action Button & Status -->
                 <div class="col-span-2 flex flex-col gap-2 justify-center">
+                    <!-- Placeholder for future status or just an empty space -->
+                    <div class="h-5"></div> 
+
                     <label class="group cursor-pointer relative">
                         <input type="file" id="fileInput" accept="image/*" class="hidden" capture="environment">
                         <div class="bg-sky-500 hover:bg-sky-400 border-b-8 border-sky-700 active:border-b-0 active:translate-y-2 transition-all rounded-xl p-4 flex items-center justify-center gap-3 shadow-lg">
@@ -225,13 +222,12 @@
     <script type="module">
         // --- 1. Imports ---
         import { initializeApp, setLogLevel } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-app.js";
-        // NOTE: Added GoogleAuthProvider, signInWithPopup, and signOut
-        import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken, GoogleAuthProvider, signInWithPopup, signOut } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-auth.js";
-        import { getFirestore, collection, addDoc, onSnapshot, deleteDoc, doc } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-firestore.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken, GoogleAuthProvider, signInWithPopup, signOut, updateProfile } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-auth.js";
+        import { getFirestore, collection, addDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-firestore.js";
 
 
         // --- 2. Config ---
-        // NOTE: These placeholder values are for demonstration/sandbox purposes.
+        // Placeholder Firebase configuration (will be overridden by environment variables in Canvas)
         const firebaseConfig = {
             apiKey: "AIzaSyDTA2k1HG4DNvCPzl-V4e3OYAEnMMNSBGQ",
             authDomain: "faunadex-54162.firebaseapp.com",
@@ -243,24 +239,23 @@
         };
 
         // --- 3. Firebase Initialization ---
-        // We use global variables (__firebase_config, __app_id, __initial_auth_token) provided by the environment.
         const effectiveFirebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : firebaseConfig;
         
         const app = initializeApp(effectiveFirebaseConfig);
         const auth = getAuth(app);
         const db = getFirestore(app);
         
-        setLogLevel('debug'); // Enable debug logging for Firebase
+        setLogLevel('debug'); 
 
-        // --- 4. All Original App Logic ---
+        // --- 4. App Globals and State ---
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-        const GEMINI_API_KEY = "AIzaSyAU0jDwjt2h1HE09Ib7k-JtpjATIL5HL2s"; // Default API key
+        const GEMINI_API_KEY = "AIzaSyAU0jDwjt2h1HE09Ib7k-JtpjATIL5HL2s"; 
 
-        // --- State ---
         let currentUser = null;
         let sightings = [];
         let currentAnalysis = null;
         let userApiKey = localStorage.getItem('faunadex_api_key') || "";
+        let userLocation = localStorage.getItem('faunadex_location') || "Acquiring..."; // Saved location or status
 
         // --- Elements ---
         const contentArea = document.getElementById('contentArea');
@@ -268,12 +263,13 @@
         const scanStatus = document.getElementById('scanStatus');
         const dragOverlay = document.getElementById('dragOverlay');
         const fileInput = document.getElementById('fileInput');
-        const dexScreen = document.querySelector('.dex-screen');
         const settingsOverlay = document.getElementById('settingsOverlay');
         const messageOverlay = document.getElementById('messageOverlay');
         const messageText = document.getElementById('messageText');
         const authOverlay = document.getElementById('authOverlay');
         const authStatus = document.getElementById('authStatus');
+        const setupOverlay = document.getElementById('setupOverlay'); 
+
 
         // --- UI Helpers ---
         window.showMessage = (msg) => {
@@ -283,17 +279,42 @@
             setTimeout(() => messageOverlay.classList.add('hidden'), 4000);
         }
 
-        // --- NEW: Auth Functions ---
+        const getGeolocation = () => {
+            return new Promise((resolve) => {
+                if (navigator.geolocation) {
+                    navigator.geolocation.getCurrentPosition(
+                        (position) => {
+                            const lat = position.coords.latitude.toFixed(4);
+                            const lon = position.coords.longitude.toFixed(4);
+                            userLocation = `${lat}, ${lon}`;
+                            localStorage.setItem('faunadex_location', userLocation);
+                            resolve();
+                        },
+                        (error) => {
+                            userLocation = "Geo-Location Disabled/Denied";
+                            resolve();
+                        },
+                        { timeout: 5000 }
+                    );
+                } else {
+                    userLocation = "Geolocation Not Supported";
+                    resolve();
+                }
+            });
+        };
+
+        // --- Auth Functions ---
 
         window.signInWithGoogle = async () => {
             try {
                 const provider = new GoogleAuthProvider();
-                await signInWithPopup(auth, provider);
+                // Use a redirect for mobile-friendliness if in a standalone environment, 
+                // but popup is safer in an iframe.
+                await signInWithPopup(auth, provider); 
+                // onAuthStateChanged will handle hiding the setup screen
                 window.showMessage("Signed in successfully with Google!");
-                window.toggleSettings(); // Close settings after successful sign-in
             } catch (error) {
                 console.error("Google Sign-In failed:", error);
-                // Handle specific errors like 'auth/popup-closed-by-user'
                 if (error.code !== 'auth/popup-closed-by-user') {
                     window.showMessage("Google Sign-In Failed: " + error.message);
                 }
@@ -303,21 +324,108 @@
         window.signOutUser = async () => {
             try {
                 await signOut(auth);
-                // Auth listener will catch this and re-run initAuth (which will fall back to anonymous)
                 window.showMessage("Signed out. Switched to anonymous mode.");
-                window.toggleSettings();
+                window.toggleSettings(); // Close settings after sign out
+                // onAuthStateChanged will trigger renderSetupScreen
             } catch (error) {
                 console.error("Sign out failed:", error);
                 window.showMessage("Sign Out Failed: " + error.message);
             }
         }
         
+        // This function acts as the "FaunaDex Registration" completion step
+        window.completeSetup = async (isGuest = false) => {
+            const nicknameInput = document.getElementById('nicknameInput');
+            const nickname = nicknameInput ? nicknameInput.value.trim() : 'Explorer';
+
+            if (!nickname) {
+                window.showMessage("Please enter a nickname.");
+                return;
+            }
+
+            if (!currentUser) {
+                window.showMessage("System not ready. Please wait.");
+                return;
+            }
+
+            // 1. Update Profile (If a permanent user, this sets their official display name)
+            if (!currentUser.isAnonymous) {
+                try {
+                    await updateProfile(currentUser, { displayName: nickname });
+                    currentUser = auth.currentUser; // Get updated user object
+                    window.showMessage(`Welcome, ${nickname}! Your registration is complete.`);
+                } catch(e) {
+                    console.error("Failed to update profile:", e);
+                    window.showMessage("Failed to save nickname.");
+                }
+            } 
+            
+            // 2. Save Nickname/Location to Local Storage (Used for all users, including guests)
+            localStorage.setItem('faunadex_nickname', nickname);
+            localStorage.setItem('faunadex_location', userLocation);
+
+            // 3. Hide setup screen and proceed to main app
+            if (setupOverlay) setupOverlay.classList.add('hidden');
+            renderList();
+        }
+
+        // --- Initial Setup Screen Rendering ---
+        async function renderSetupScreen() {
+            if (!setupOverlay) return;
+            
+            // Re-acquire location status
+            await getGeolocation(); 
+            
+            const savedNickname = localStorage.getItem('faunadex_nickname') || '';
+            
+            setupOverlay.classList.remove('hidden');
+            setupOverlay.classList.add('flex');
+            
+            const userIsAnonymous = currentUser ? currentUser.isAnonymous : true;
+            const titleText = userIsAnonymous ? "WELCOME EXPLORER" : `Welcome Back, ${currentUser.displayName || savedNickname || 'Explorer'}`;
+
+            setupOverlay.innerHTML = `
+                <div class="w-full p-4 bg-slate-800 rounded-lg shadow-xl border border-slate-700 space-y-4">
+                    <h2 class="text-3xl font-bold text-emerald-400 mb-4">${titleText}</h2>
+                    
+                    <div class="space-y-2">
+                        <label for="nicknameInput" class="text-slate-400 text-sm block">Your Explorer Nickname:</label>
+                        <input type="text" id="nicknameInput" value="${savedNickname}" placeholder="Enter a name..." class="w-full bg-slate-900 text-white px-3 py-2 rounded-lg border border-slate-700 focus:border-emerald-500 outline-none">
+                    </div>
+
+                    <div class="space-y-2">
+                        <label class="text-slate-400 text-sm block">Current Scanning Location:</label>
+                        <div class="w-full bg-slate-900 text-yellow-400 px-3 py-2 rounded-lg border border-slate-700 text-sm font-mono flex items-center gap-2">
+                            <i data-lucide="map-pin" class="w-4 h-4"></i>
+                            <span id="currentLocationText">${userLocation}</span>
+                        </div>
+                        <p class="text-xs text-slate-500 italic">*This location is automatically tagged to your scans.</p>
+                    </div>
+
+                    ${userIsAnonymous ? `
+                        <p class="text-xs text-red-400 font-bold mt-4">WARNING: You are in Guest Mode. Data is temporary and may be lost.</p>
+                        <button onclick="window.signInWithGoogle()" class="w-full bg-blue-600 hover:bg-blue-500 text-white py-3 rounded-lg font-bold text-lg flex items-center justify-center gap-2 shadow-md">
+                            <i data-lucide="log-in" class="w-6 h-6"></i> SIGN IN WITH GOOGLE (Save Data)
+                        </button>
+                        <button onclick="window.completeSetup(true)" class="w-full bg-slate-700 hover:bg-slate-600 text-white py-2 rounded-lg font-bold">
+                            CONTINUE AS GUEST
+                        </button>
+                    ` : `
+                        <button onclick="window.completeSetup(false)" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white py-3 rounded-lg font-bold text-lg shadow-md">
+                            START SCANNING
+                        </button>
+                    `}
+                </div>
+            `;
+            // Initialize lucide icons for the new content
+            lucide.createIcons(); 
+        }
+
         // --- Settings Management ---
         function renderSettings() {
-            // Re-read local storage key for fresh value
             const currentApiKey = localStorage.getItem('faunadex_api_key') || "";
             const userIsAnonymous = currentUser ? currentUser.isAnonymous : true;
-            const userDisplayName = currentUser ? (currentUser.displayName || `User ID: ${currentUser.uid.substring(0, 8)}...`) : 'Guest';
+            const nickname = localStorage.getItem('faunadex_nickname') || currentUser.displayName || 'Guest';
             const fullUserId = currentUser ? currentUser.uid : 'N/A';
             
             if (!settingsOverlay) return;
@@ -330,15 +438,15 @@
                 
                 <div class="space-y-4 overflow-y-auto pb-4">
                     <div class="text-emerald-400 text-xs break-all">
-                        <span class="block text-slate-500 mb-1">USER ID (For public data sync)</span>
+                        <span class="block text-slate-500 mb-1">USER ID (for data access)</span>
                         <span class="font-bold text-white">${fullUserId}</span>
                     </div>
-
-                    <div class="text-emerald-400 text-xs">
-                        USER STATUS: <span class="font-bold text-white">${userDisplayName}</span>
-                        ${userIsAnonymous ? '<span class="text-yellow-400">(Temporary)</span>' : '<span class="text-blue-400">(Persistent)</span>'}
-                    </div>
                     
+                    <div class="text-emerald-400 text-xs">
+                        NICKNAME: <span class="font-bold text-white">${nickname}</span>
+                        <span class="block text-slate-500">STATUS: ${userIsAnonymous ? 'Temporary Guest' : 'Persistent Account'}</span>
+                    </div>
+
                     ${userIsAnonymous ? `
                         <button onclick="window.signInWithGoogle()" class="w-full bg-blue-600 hover:bg-blue-500 text-white py-2 rounded font-bold text-sm flex items-center justify-center gap-2">
                             <i data-lucide="log-in" class="w-4 h-4"></i> SIGN IN WITH GOOGLE
@@ -388,46 +496,37 @@
                 userApiKey = "";
                 window.showMessage("Restored Default Key");
             }
-            window.toggleSettings(); // Re-render/close settings
+            window.toggleSettings(); 
         }
 
-        // --- Auth & Init (FIXED) ---
+        // --- Auth & Init ---
         const initAuth = async () => {
-            let attemptCustomToken = false;
-            try {
-                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                    attemptCustomToken = true;
-                    console.log("Attempting sign in with custom token...");
+            const token = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+            if (authStatus) authStatus.innerText = "Attempting system authentication...";
+
+            if (token) {
+                try {
+                    console.log("Attempting sign in with custom platform token...");
                     if (authStatus) authStatus.innerText = "Authenticating with platform token...";
-                    await signInWithCustomToken(auth, __initial_auth_token);
-                    return; // Success
-                } else {
-                    console.log("Attempting anonymous sign in (No custom token provided)...");
-                    if (authStatus) authStatus.innerText = "Connecting to anonymous network...";
-                    await signInAnonymously(auth);
-                    return; // Success
+                    await signInWithCustomToken(auth, token);
+                    return; 
+                } catch (error) {
+                    console.warn(`Custom token failed (Code: ${error.code}). Falling back to anonymous sign in...`);
+                    console.error("Token error details:", error);
                 }
-            } catch (error) {
-                console.error("Authentication failed:", error);
-                
-                // FIX: If custom token failed (auth/custom-token-mismatch), try anonymous sign in as a fallback
-                if (attemptCustomToken && error.code === 'auth/custom-token-mismatch') {
-                    console.warn("Custom token failed. Falling back to anonymous sign in...");
-                    if (authStatus) authStatus.innerText = "Custom token mismatch. Attempting anonymous fallback...";
-                    try {
-                        await signInAnonymously(auth);
-                        return; // Anonymous sign in successful
-                    } catch (anonError) {
-                        console.error("Anonymous sign in failed too:", anonError);
-                        error = anonError; // Use the anonymous error for final display
-                    }
-                }
-                
-                // Final error handling and UI update (FIX: Added null checks to prevent TypeError)
-                window.showMessage("Auth Error: " + error.message);
-                
+            }
+
+            // Fallback: Sign in Anonymously
+            try {
+                if (authStatus) authStatus.innerText = "Connecting to anonymous network...";
+                await signInAnonymously(auth);
+            } catch (anonError) {
+                console.error("Anonymous sign in failed:", anonError);
+                window.showMessage("Critical Auth Error: Cannot connect to Firebase.");
+
                 if (authStatus) {
-                    authStatus.innerText = `AUTH ERROR: ${error.code}\nCheck console & Firebase settings.`;
+                    authStatus.innerText = `CRITICAL AUTH ERROR: ${anonError.code}`;
                     authStatus.classList.remove("text-emerald-300");
                     authStatus.classList.add("text-red-400");
                 }
@@ -446,27 +545,40 @@
             if (user) {
                 console.log("Auth success. User ID:", user.uid, "Anonymous:", user.isAnonymous);
                 
-                // Only hide the overlay if auth was successful (even if it's anonymous)
+                // 1. Hide the initial auth overlay
                 if (authStatus) authStatus.innerText = "SYSTEM ONLINE. READY.";
                 setTimeout(() => {
                     if (authOverlay) authOverlay.classList.add('hidden');
                 }, 500);
                 
-                // Update UI and start listening to data
+                // 2. Determine if setup/registration is needed
+                const isSetupComplete = !!localStorage.getItem('faunadex_nickname');
+                
+                if (user.isAnonymous && !isSetupComplete) {
+                    // Force setup for anonymous user if they haven't set a nickname yet
+                    renderSetupScreen();
+                } else if (!user.isAnonymous && !user.displayName) {
+                    // Force setup for new Google user if they don't have a display name set by the app
+                    renderSetupScreen();
+                } else {
+                    // All good, hide setup and show main app
+                    if (setupOverlay) setupOverlay.classList.add('hidden');
+                    // 3. Start listening to data and render main list
+                    subscribeToData();
+                }
+                
+                // Update settings view if open
                 if (!settingsOverlay.classList.contains('hidden')) {
                     renderSettings();
                 }
-                subscribeToData();
+
             } else {
-                // Handle Sign Out/No User
-                console.log("Auth state changed: No user. Re-initializing...");
-                // The initAuth function will be called on sign out to switch to an anonymous user
-                // If it fails, the previous error handling will run.
-                // We rely on the initial call to initAuth below. When a user signs out (i.e., when signOutUser runs),
-                // onAuthStateChanged fires with user=null, and the sign-in flow should restart immediately.
-                if (currentUser === null) {
-                    initAuth();
-                }
+                // User signed out, or failed to sign in. 
+                currentUser = null;
+                // Re-trigger setup screen when signed out
+                if (setupOverlay) setupOverlay.classList.remove('hidden');
+                renderSetupScreen(); 
+                console.log("Auth state changed: No user is currently active. Showing setup.");
             }
         });
         
@@ -477,11 +589,11 @@
         // --- Data Sync ---
         function subscribeToData() {
             if (!currentUser) {
-                console.error("Cannot subscribe to data: User not authenticated.");
+                console.log("Not subscribing to data: User is null.");
+                renderList(); // Render empty list for signed-out state
                 return;
             }
             try {
-                // IMPORTANT: Ensure the security rules in Firestore allow reading data for the current user ID
                 const userPath = `artifacts/${appId}/users/${currentUser.uid}/sightings`;
                 const q = collection(db, userPath);
 
@@ -503,16 +615,22 @@
             if (currentAnalysis) return; // Don't override if looking at analysis
             if (!contentArea) return;
 
+            const nickname = localStorage.getItem('faunadex_nickname') || 'Explorer';
+
             if (sightings.length === 0) {
                 contentArea.innerHTML = `
                     <div class="h-full flex flex-col items-center justify-center text-slate-500 opacity-60">
                         <i data-lucide="aperture" class="w-16 h-16 mb-4"></i>
-                        <p class="text-center font-bold">NO DATA FOUND</p>
+                        <p class="text-center font-bold">GREETINGS, ${nickname.toUpperCase()}</p>
+                        ${currentUser && currentUser.isAnonymous ? `<p class="text-xs text-center mt-2 text-yellow-500">Note: Your Guest data is temporary.</p>` : ''}
                         <p class="text-xs text-center mt-2">SCAN A SPECIMEN TO BEGIN</p>
                     </div>
                 `;
             } else {
                 contentArea.innerHTML = `
+                    <div class="p-2 text-slate-400 text-xs mb-3 border-b border-slate-800">
+                        ${nickname}'s SIGHTINGS (${sightings.length})
+                    </div>
                     <div class="grid grid-cols-1 gap-3">
                         ${sightings.map(s => `
                             <div onclick="window.viewSighting('${s.id}')" class="bg-slate-800/80 border border-slate-600 rounded p-2 flex gap-3 cursor-pointer hover:bg-slate-700 transition-colors group">
@@ -524,7 +642,7 @@
                                         <h3 class="text-emerald-400 font-bold truncate">${s.nickname}</h3>
                                         <span class="text-[10px] text-slate-500 font-mono">${new Date(s.timestamp).toLocaleDateString()}</span>
                                     </div>
-                                    <p class="text-slate-400 text-xs italic truncate">${s.commonName}</p>
+                                    <p class="text-slate-400 text-xs italic truncate">${s.scientificName}</p>
                                     <div class="mt-1 flex items-center gap-1">
                                         <span class="px-1.5 py-0.5 bg-slate-700 text-slate-300 text-[10px] rounded font-bold uppercase">${s.rarity}</span>
                                     </div>
@@ -630,7 +748,6 @@
             };
 
             try {
-                // Saves data under the current user's UID (Google or Anonymous)
                 const userPath = `artifacts/${appId}/users/${currentUser.uid}/sightings`;
                 await addDoc(collection(db, userPath), finalData);
                 currentAnalysis = null;
@@ -674,6 +791,12 @@
                 return;
             }
 
+            // Check if setup/registration is done before allowing scan
+            if (setupOverlay && !setupOverlay.classList.contains('hidden')) {
+                 window.showMessage("Please complete the registration screen first.");
+                 return;
+            }
+
             const apiKeyToUse = userApiKey || GEMINI_API_KEY;
             
             if (!apiKeyToUse) {
@@ -687,11 +810,8 @@
             if (scanStatus) scanStatus.innerText = "Compressing Visual Data...";
             
             try {
-                let locStr = "Unknown Coords";
-                try {
-                    const pos = await new Promise((res, rej) => navigator.geolocation.getCurrentPosition(res, rej, {timeout: 4000}));
-                    locStr = `${pos.coords.latitude.toFixed(4)}, ${pos.coords.longitude.toFixed(4)}`;
-                } catch(e) { console.warn("Loc failed"); }
+                // Use the saved location from state, updated during setup/init
+                const locStr = userLocation.startsWith('Geo') ? userLocation : `(${userLocation})`;
 
                 const base64Full = await compressImage(file);
                 const base64Raw = base64Full.split(',')[1];
@@ -699,104 +819,156 @@
                 if (scanStatus) scanStatus.innerText = "Identifying Species...";
                 
                 const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKeyToUse}`;
+                
+                const systemPrompt = `You are FaunaDex, a digital animal scanner. Analyze the image and provide a structured JSON output with the following fields: commonName (species name), scientificName (Latin name), estimatedWeight (e.g., "5 kg"), dangerLevel ("Safe", "Caution", "Danger"), diet ("Carnivore", "Herbivore", "Omnivore"), rarity ("Common", "Uncommon", "Rare", "Legendary"), funFact (a short, interesting, single paragraph about the animal). The language must be professional and concise.`;
+                const userQuery = "Identify the animal in the image and generate the structured analysis.";
 
-                const prompt = `
-                    Analyze image. If NOT a real animal (human/drawing/object), return JSON: {"valid": false}.
-                    If YES animal, return JSON:
-                    {
-                        "valid": true,
-                        "commonName": "Short Common Name",
-                        "scientificName": "Scientific Name",
-                        "estimatedWeight": "e.g. 5kg",
-                        "diet": "Herbivore"|"Carnivore"|"Omnivore",
-                        "funFact": "Short sci-fi style field note.",
-                        "rarity": "Common"|"Uncommon"|"Rare"|"Legendary",
-                        "dangerLevel": "Safe"|"Caution"|"Dangerous"
+                const payload = {
+                    contents: [{
+                        parts: [
+                            { text: userQuery },
+                            { inlineData: { mimeType: file.type, data: base64Raw } }
+                        ]
+                    }],
+                    systemInstruction: { parts: [{ text: systemPrompt }] },
+                    generationConfig: {
+                        responseMimeType: "application/json",
+                        responseSchema: {
+                            type: "OBJECT",
+                            properties: {
+                                "commonName": { "type": "STRING" },
+                                "scientificName": { "type": "STRING" },
+                                "estimatedWeight": { "type": "STRING" },
+                                "dangerLevel": { "type": "STRING" },
+                                "diet": { "type": "STRING" },
+                                "rarity": { "type": "STRING" },
+                                "funFact": { "type": "STRING" },
+                            },
+                            required: ["commonName", "scientificName", "estimatedWeight", "dangerLevel", "diet", "rarity", "funFact"]
+                        }
                     }
-                `;
+                };
 
-                const response = await fetch(url, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        contents: [{
-                            parts: [
-                                { text: prompt },
-                                { inlineData: { mimeType: "image/jpeg", data: base64Raw } }
-                            ]
-                        }],
-                        generationConfig: { responseMimeType: "application/json" }
-                    })
-                });
+                // --- API Call with Backoff ---
+                let response;
+                let result;
+                let attempts = 0;
+                const maxAttempts = 3;
+                
+                if (scanStatus) scanStatus.innerText = "Querying Gemini AI...";
 
-                if (!response.ok) throw new Error("API connection failed. Check Key or CORS.");
+                while (attempts < maxAttempts) {
+                    try {
+                        response = await fetch(url, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(payload)
+                        });
 
-                const data = await response.json();
-                const result = JSON.parse(data.candidates?.[0]?.content?.parts?.[0]?.text || "{}");
-
-                if (!result.valid) {
-                    window.showMessage("Error: Visual signature is not an animal.");
-                    if (scanOverlay) scanOverlay.classList.add('hidden');
-                    return;
+                        if (response.ok) {
+                            result = await response.json();
+                            break; // Success
+                        } else if (response.status === 429) {
+                            // Rate limit or temporary error
+                            attempts++;
+                            const delay = Math.pow(2, attempts) * 1000;
+                            console.warn(`Rate limit hit, retrying in ${delay / 1000}s...`);
+                            if (attempts < maxAttempts) {
+                                await new Promise(res => setTimeout(res, delay));
+                            }
+                        } else {
+                            // Non-rate limit HTTP error
+                            const errorBody = await response.json();
+                            throw new Error(`API Error ${response.status}: ${JSON.stringify(errorBody)}`);
+                        }
+                    } catch (e) {
+                        if (attempts === maxAttempts - 1) throw e;
+                        attempts++;
+                        const delay = Math.pow(2, attempts) * 1000;
+                        console.warn(`Attempt failed, retrying in ${delay / 1000}s...`);
+                        await new Promise(res => setTimeout(res, delay));
+                    }
                 }
+                
+                if (!result) throw new Error("API failed after maximum retries.");
 
-                const newEntry = {
-                    ...result,
+
+                const jsonText = result.candidates?.[0]?.content?.parts?.[0]?.text;
+                if (!jsonText) throw new Error("No analysis received from AI.");
+
+                const analysisData = JSON.parse(jsonText);
+
+                const sighting = {
+                    ...analysisData,
                     imageBase64: base64Full,
                     location: locStr,
-                    timestamp: Date.now()
+                    timestamp: Date.now(),
+                    nickname: analysisData.commonName 
                 };
                 
                 if (scanOverlay) scanOverlay.classList.add('hidden');
-                renderDetail(newEntry, true);
+                
+                // Show detail view for the new sighting
+                renderDetail(sighting, true);
 
-            } catch (err) {
-                console.error(err);
+            } catch (error) {
+                console.error("Scanning Error:", error);
                 if (scanOverlay) scanOverlay.classList.add('hidden');
-                window.showMessage("System Malfunction: " + err.message);
+                window.showMessage("Scan Failed: " + error.message.substring(0, 100));
             }
         };
 
-        // --- Listeners ---
-        if (fileInput) fileInput.addEventListener('change', (e) => handleFile(e.target.files[0]));
-
-        if (dexScreen) {
-            dexScreen.addEventListener('dragover', (e) => {
-                e.preventDefault();
-                if (dragOverlay) {
-                    dragOverlay.classList.remove('hidden');
-                    dragOverlay.classList.add('flex');
-                }
-            });
-
-            dexScreen.addEventListener('dragleave', (e) => {
-                e.preventDefault();
-                if (dragOverlay) {
-                    dragOverlay.classList.add('hidden');
-                    dragOverlay.classList.remove('flex');
-                }
-            });
-
-            dexScreen.addEventListener('drop', (e) => {
-                e.preventDefault();
-                if (dragOverlay) {
-                    dragOverlay.classList.add('hidden');
-                    dragOverlay.classList.remove('flex');
-                }
-                
-                if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-                    handleFile(e.dataTransfer.files[0]);
+        // --- Event Listeners ---
+        
+        // Input Button
+        if (fileInput) {
+            fileInput.addEventListener('change', (e) => {
+                if (e.target.files.length > 0) {
+                    handleFile(e.target.files[0]);
                 }
             });
         }
 
-        // Init Icons
-        lucide.createIcons();
+        // Drag and Drop Logic (Enhanced)
+        const preventDefaults = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+        };
+
+        // Assuming 'dexScreen' is a variable referencing the screen element, which is the parent of contentArea, setupOverlay, etc.
+        const dexScreen = document.querySelector('.dex-screen');
+        if (dexScreen) {
+            ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+                dexScreen.addEventListener(eventName, preventDefaults, false);
+            });
+
+            ['dragenter', 'dragover'].forEach(eventName => {
+                dexScreen.addEventListener(eventName, () => {
+                    if (dragOverlay) dragOverlay.classList.remove('hidden');
+                    dragOverlay.classList.add('flex');
+                }, false);
+            });
+
+            ['dragleave', 'drop'].forEach(eventName => {
+                dexScreen.addEventListener(eventName, () => {
+                    if (dragOverlay) dragOverlay.classList.add('hidden');
+                    dragOverlay.classList.remove('flex');
+                }, false);
+            });
+
+            dexScreen.addEventListener('drop', (e) => {
+                const dt = e.dataTransfer;
+                const files = dt.files;
+                if (files.length > 0 && files[0].type.startsWith('image/')) {
+                    handleFile(files[0]);
+                }
+            }, false);
+        }
+
+        // --- Initial Call ---
+        // Auth is started via initAuth at the end of the script, 
+        // and the rendering flow is handled by onAuthStateChanged.
 
     </script>
 </body>
-</html>
-    
-  </body>
-  
 </html>
